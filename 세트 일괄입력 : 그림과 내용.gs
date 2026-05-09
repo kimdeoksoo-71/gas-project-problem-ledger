@@ -43,26 +43,48 @@ function insertImageAndLogToDocs() {
   const insertFolder = insertFolderIter.next();
 
   // === 4) 원본 시트들 캐시 (id->row, id->docUrl, P기존값) ===
-  const targetSheetNames = ['[풀세트]', '[써킷]', '[문항]']; // ✅ 대괄호 포함 주의
+  const targetSheetNames = ['[풀세트]', '[써킷]', '[문항]'];
   const sheetInfoList = targetSheetNames
-    .map(name => ss.getSheetByName(name))
+    .map(name => {
+      const sh = ss.getSheetByName(name);
+      if (!sh) Logger.log(`⚠️ 시트를 찾을 수 없음: ${name}`);
+      return sh;
+    })
     .filter(Boolean)
     .map(sh => prepareSheetCache_(sh));
 
+  Logger.log(`📋 활성시트: "${activeSh.getName()}", 처리대상 행: [${rows.join(', ')}]`);
+  Logger.log(`📋 캐시된 원본 시트 수: ${sheetInfoList.length}`);
+
   let successCount = 0;
+  const skipped = [];  // 스킵 사유 기록용
 
   // === 5) 입력된 행번호만 처리 ===
   for (const r of rows) {
-    // 활성시트의 A열에서 id만 가져옴 (요청사항: 각 행 id는 A열)
-    const idStr = String(activeSh.getRange(r, 1).getValue() || '').trim();
-    if (!idStr) continue;
+    // ★ 수정: A열 값을 문자열로 변환할 때 숫자형이면 정수로 변환하여 비교
+    const rawVal = activeSh.getRange(r, 1).getValue();
+    const idStr = normalizeId_(rawVal);
+
+    if (!idStr) {
+      skipped.push(`행${r}: A열 비어있음 (원본값: "${rawVal}")`);
+      Logger.log(`⏭️ 행${r}: A열 비어있음 (원본값: "${rawVal}")`);
+      continue;
+    }
 
     // 원본은 [풀세트]/[써킷]/[문항]에서 id로 찾음
     const src = findSourceById_(sheetInfoList, idStr);
-    if (!src) continue;
+    if (!src) {
+      skipped.push(`행${r}: id="${idStr}" → 원본 시트에서 매칭 실패`);
+      Logger.log(`⏭️ 행${r}: id="${idStr}" → [풀세트]/[써킷]/[문항] 어디에도 없음`);
+      continue;
+    }
 
-    const link = String(src.docUrl || '').trim(); // 원본 시트의 N열
-    if (!link) continue;
+    const link = String(src.docUrl || '').trim();
+    if (!link) {
+      skipped.push(`행${r}: id="${idStr}" → N열(문서링크) 비어있음`);
+      Logger.log(`⏭️ 행${r}: id="${idStr}" → 원본시트 "${src.cache.sh.getName()}" N열 비어있음`);
+      continue;
+    }
 
     try {
       const docId = extractDocId(link);
@@ -82,28 +104,52 @@ function insertImageAndLogToDocs() {
 
       if (file) {
         body.insertImage(0, file.getBlob());
-        body.insertParagraph(1, ''); // 기존과 동일 위치/방식
+        body.insertParagraph(1, '');
       } else {
-        Logger.log(`이미지 없음: ${idStr}`);
+        Logger.log(`📷 이미지 없음: ${idStr}`);
       }
 
-      // === 날짜 및 기록 (문서) : 기존과 동일(새 문단으로 append) ===
+      // === 날짜 및 기록 (문서) ===
       body.appendParagraph(logText);
       doc.saveAndClose();
 
-      // === 날짜 및 기록 (시트 P열) : id 매칭된 원본 행에 누적(줄바꿈) ===
+      // === 날짜 및 기록 (시트 P열) ===
       queueAppendLogSingle_(src.cache, idStr, logText);
 
       successCount++;
+      Logger.log(`✅ 행${r}: id="${idStr}" 처리 완료`);
     } catch (err) {
-      Logger.log(`오류 (${idStr}): ${err}`);
+      skipped.push(`행${r}: id="${idStr}" → 오류: ${err.message}`);
+      Logger.log(`❌ 오류 (행${r}, id=${idStr}): ${err}`);
     }
   }
 
   // === 6) P열 배치 쓰기 ===
   flushPUpdates_(sheetInfoList);
 
-  ui.alert(`✅ 완료: ${successCount}개의 문서 + P열 누적 기록이 반영되었습니다.`);
+  // === 7) 결과 요약 ===
+  let msg = `✅ 완료: ${successCount}개 처리됨`;
+  if (skipped.length > 0) {
+    msg += `\n\n⏭️ 건너뛴 항목 (${skipped.length}개):\n` + skipped.join('\n');
+  }
+  Logger.log(msg);
+  ui.alert(msg);
+}
+
+/* =========================
+ * ★ 추가: ID 정규화 함수
+ * 숫자형 값이 들어오면 소수점 없이 정수 문자열로 변환
+ * (스프레드시트에서 "001"이 1로 읽히는 문제 대응)
+ * ========================= */
+function normalizeId_(rawVal) {
+  if (rawVal === '' || rawVal == null) return '';
+
+  // 숫자형이면 정수 문자열로 변환 (1.0 → "1", 123 → "123")
+  if (typeof rawVal === 'number') {
+    return Number.isInteger(rawVal) ? String(rawVal) : String(rawVal);
+  }
+
+  return String(rawVal).trim();
 }
 
 /* =========================
@@ -131,7 +177,7 @@ function parseRowInput_(input) {
 
 /**
  * 시트 캐시 준비:
- * - A열 id -> row
+ * - A열 id -> row  (★ 수정: normalizeId_ 적용)
  * - N열 docUrl 캐시 (id->url)
  * - P열 기존값 읽기
  */
@@ -140,23 +186,24 @@ function prepareSheetCache_(sh) {
   const cache = {
     sh,
     lastRow,
-    idRowMap: {},   // id -> rowNumber
-    nUrlMap: {},    // id -> docUrl (N열)
-    pOldMap: {},    // rowNumber -> oldText
-    pWriteMap: {}   // rowNumber -> newText
+    idRowMap: {},
+    nUrlMap: {},
+    pOldMap: {},
+    pWriteMap: {}
   };
 
   if (lastRow < 2) return cache;
 
   const numRows = lastRow - 1;
 
-  const aVals = sh.getRange(2, 1, numRows, 1).getValues();    // A2:A
-  const nVals = sh.getRange(2, 14, numRows, 1).getValues();   // N2:N
-  const pVals = sh.getRange(2, 16, numRows, 1).getValues();   // P2:P
+  const aVals = sh.getRange(2, 1, numRows, 1).getValues();
+  const nVals = sh.getRange(2, 14, numRows, 1).getValues();
+  const pVals = sh.getRange(2, 16, numRows, 1).getValues();
 
   for (let i = 0; i < numRows; i++) {
     const row = i + 2;
-    const id = String(aVals[i][0] || '').trim();
+    // ★ 수정: normalizeId_로 통일된 형식 사용
+    const id = normalizeId_(aVals[i][0]);
     if (!id) continue;
 
     cache.idRowMap[id] = row;
@@ -182,7 +229,7 @@ function findSourceById_(sheetInfoList, idStr) {
 }
 
 /**
- * 특정 cache(=특정 원본 시트)에서만 P열에 누적(줄바꿈)
+ * 특정 cache에서 P열에 누적(줄바꿈)
  */
 function queueAppendLogSingle_(cache, idStr, logText) {
   const row = cache.idRowMap[idStr];
@@ -238,7 +285,6 @@ function extractDocId(url) {
   m = s.match(/[?&]id=([a-zA-Z0-9-_]+)/);
   if (m) return m[1];
 
-  // fallback: 문서ID처럼 보이는 토큰
   m = s.match(/[-\w]{25,}/);
   if (m) return m[0];
 

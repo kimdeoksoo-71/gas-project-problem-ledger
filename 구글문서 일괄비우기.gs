@@ -7,7 +7,7 @@ function clearDocsByRange() {
   const sheet = ss.getActiveSheet();
 
   // === 1. 입력받기 ===
-  const res = ui.prompt('첫 문항번호와 끝 문항번호를 입력하세요', '예: 0001,0010', ui.ButtonSet.OK_CANCEL);
+  const res = ui.prompt('첫 문항ID와 끝 문항ID를 숫자4자리만 각각 입력하세요', '예: 0001,0010', ui.ButtonSet.OK_CANCEL);
   if (res.getSelectedButton() !== ui.Button.OK) return;
   const [startNum, endNum] = res.getResponseText().split(',').map(s => s.trim());
 
