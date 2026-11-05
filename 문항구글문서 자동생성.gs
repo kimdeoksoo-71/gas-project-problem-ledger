@@ -1,5 +1,5 @@
 /**************************************************
- * D0001 ~ D9999 형식의 구글문서 일괄 생성기 (시트용) - 개선판
+ * D0001 ~ D9999 형식의 구글문서 일괄 생성기 (시트용) - 개선판 v2
  * - 폴더: "내 드라이브/20 문항 관리/문항 구글문서"
  * - 배치 크기 고정 대신 "시간 기준"으로 최대한 생성
  *   (1회 실행당 4분 30초까지 작업 후 다음 배치 자동 예약)
@@ -7,12 +7,12 @@
  * - 생성 시 스프레드시트 A열에서 같은 이름을 찾아
  *   N열(14번째 열)에 구글문서 링크 기록
  * - 타임 트리거로 자동 이어서 실행
- * - 개선사항:
- *   1) 시간 기반 배치 → 실행마다 가능한 최대 개수 자동 처리
- *   2) 일회성 트리거 잔해 자동 정리 (트리거 20개 제한 대응)
- *   3) 트리거 실행 시 ui.alert 에러 방지 → toast로 완료 알림
- *   4) A열 데이터를 루프 밖에서 1회만 읽어 속도 개선
- *   5) 10개마다 상태 저장 → 중간에 죽어도 이어서 실행 가능
+ * - ✅ v2 추가: 생성된 문서를 '페이지 없음(Pageless)' 형식으로 자동 설정
+ *
+ * ⚠️ 사전 설정 (최초 1회 필수):
+ *   Apps Script 편집기 왼쪽 [서비스(Services)] 옆 ➕ 클릭
+ *   → "Google Docs API" 선택 → 식별자 "Docs" 그대로 → 추가
+ *   (이 설정이 없으면 "Docs is not defined" 오류가 발생합니다)
  **************************************************/
 
 const FOLDER_PATH = ['20 문항 관리', '문항 구글문서'];
@@ -26,6 +26,17 @@ const SAVE_EVERY = 10;                 // 상태 저장 주기 (문서 N개마�
  **************************************************/
 function startCreateDocs() {
   const ui = SpreadsheetApp.getUi();
+
+  // ✅ Docs API 고급 서비스 활성화 여부 확인 (페이지 없음 설정에 필요)
+  if (typeof Docs === 'undefined') {
+    ui.alert(
+      '⚠️ Google Docs API 서비스가 활성화되지 않았습니다.\n\n' +
+      'Apps Script 편집기 왼쪽 [서비스] 옆 ➕ 를 눌러\n' +
+      '"Google Docs API"를 추가한 뒤 다시 실행하세요.\n\n' +
+      '(문서의 "페이지 없음" 설정에 필요합니다)'
+    );
+    return;
+  }
 
   // 이미 진행 중인 작업이 있는지 확인
   const existingState = PropertiesService.getScriptProperties().getProperty(PROP_KEY);
@@ -127,13 +138,17 @@ function processNextBatch_() {
 
     // 구글문서 생성 후 대상 폴더로 이동
     const doc = DocumentApp.create(name);
-    const file = DriveApp.getFileById(doc.getId());
+    const docId = doc.getId();
+    const file = DriveApp.getFileById(docId);
     file.moveTo(folder);
+
+    // ✅ '페이지 없음(Pageless)' 형식으로 설정
+    setPageless_(docId, name);
 
     // 링크를 시트 N열에 기록
     const rowIndex = data.findIndex(r => r[0] === name);
     if (rowIndex !== -1) {
-      sheet.getRange(rowIndex + 2, 14).setValue(`https://docs.google.com/document/d/${doc.getId()}`);
+      sheet.getRange(rowIndex + 2, 14).setValue(`https://docs.google.com/document/d/${docId}`);
     }
 
     state.current++;
@@ -164,6 +179,33 @@ function processNextBatch_() {
     // ✅ 완료 처리 (트리거 실행 시 ui.alert는 에러가 나므로 toast 사용)
     props.deleteProperty(PROP_KEY);
     ss.toast(`✅ 총 ${state.created}개의 문서를 생성했습니다.`, '완료', 10);
+  }
+}
+
+/**************************************************
+ * ✅ 구글문서를 '페이지 없음(Pageless)' 형식으로 설정
+ * - Docs API 고급 서비스 필요 ([서비스]에서 "Google Docs API" 추가)
+ * - 실패해도 문서 생성 자체는 유지 (로그만 남김)
+ **************************************************/
+function setPageless_(docId, name) {
+  try {
+    Docs.Documents.batchUpdate(
+      {
+        requests: [
+          {
+            updateDocumentStyle: {
+              documentStyle: {
+                documentFormat: { documentMode: 'PAGELESS' }
+              },
+              fields: 'documentFormat'
+            }
+          }
+        ]
+      },
+      docId
+    );
+  } catch (e) {
+    Logger.log(`⚠️ 페이지 없음 설정 실패 (${name}): ${e.message}`);
   }
 }
 

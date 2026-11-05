@@ -1,6 +1,13 @@
 {
   "timeZone": "Asia/Seoul",
   "dependencies": {
+    "enabledAdvancedServices": [
+      {
+        "userSymbol": "Docs",
+        "version": "v1",
+        "serviceId": "docs"
+      }
+    ]
   },
   "exceptionLogging": "STACKDRIVER",
   "runtimeVersion": "V8"

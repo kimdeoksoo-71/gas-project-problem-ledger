@@ -4,8 +4,8 @@ function addCellLinksInRange() {
   var sheet = spreadsheet.getActiveSheet();
 
   // 시작 행과 끝 행을 지정 (예: 2행부터 10행까지)
-  var startRow = 2;
-  var endRow = 47;
+  var startRow = 1599;
+  var endRow = 1608;
 
   // A열의 지정한 범위 가져오기
   var range = sheet.getRange(startRow, 1, endRow - startRow + 1, 1);
