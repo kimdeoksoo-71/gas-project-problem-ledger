@@ -69,8 +69,8 @@ function relogMoveHistory() {
         errors.push(`${row}행: T열 ID 비어있음 (건너뜀)`);
         continue;
       }
-      if (!/^D\d{4}$/.test(id)) {
-        throw new Error(`ID 형식이 예상과 다름(예: D0123): ${id}`);
+      if (!/^[DS]\d{4}$/.test(id)) {
+        throw new Error(`ID 형식이 예상과 다름(예: D0123, S0001): ${id}`);
       }
 
       // 세 시트에서 A열=ID 인 유일한 행 찾기

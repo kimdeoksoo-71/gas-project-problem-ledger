@@ -1,7 +1,7 @@
 /**************************************************
  * 구글문서 '페이지 없음' 일괄 설정 (단독 실행용)
  *
- * - "문항 구글문서" 폴더에서 D####(범위) 문서를 찾아
+ * - "문항 구글문서" 폴더에서 D#### 또는 S####(범위) 문서를 찾아
  * - Docs API로 각 문서를 '페이지 없음(PAGELESS)'으로 전환
  * - 문서 내용은 건드리지 않음 (레이아웃 설정만 변경)
  *
@@ -20,6 +20,7 @@
  **************************************************/
 
 const PAGELESS_CFG = {
+  PREFIX: 'D',                  // 문서 ID 접두어 (D 또는 S)
   START_NUM: 1452,              // 첫 문서 번호 (4자리)
   END_NUM: 1489,                // 끝 문서 번호 (4자리)
   FOLDER_NAME: '문항 구글문서',  // 문서가 들어있는 폴더명
@@ -27,7 +28,7 @@ const PAGELESS_CFG = {
 
 /** ① 편집기 실행용: PAGELESS_CFG의 범위 사용 */
 function setPagelessByConfig() {
-  const summary = runSetPageless_(PAGELESS_CFG.START_NUM, PAGELESS_CFG.END_NUM);
+  const summary = runSetPageless_(PAGELESS_CFG.PREFIX, PAGELESS_CFG.START_NUM, PAGELESS_CFG.END_NUM);
   Logger.log(summary);
 }
 
@@ -36,24 +37,28 @@ function setPagelessWithPrompt() {
   const ui = SpreadsheetApp.getUi();
   const res = ui.prompt(
     "'페이지 없음' 일괄 설정",
-    '첫 번호와 끝 번호를 숫자 4자리로 입력하세요.\n예: 1452,1489',
+    '첫 번호와 끝 번호를 입력하세요.\nD 문서: 1452,1489  (또는 D1452,D1489)\nS 문서: S0001,S0100',
     ui.ButtonSet.OK_CANCEL
   );
   if (res.getSelectedButton() !== ui.Button.OK) return;
 
-  const parts = res.getResponseText().split(',').map(v => parseInt(v.trim(), 10));
-  const s = parts[0], e = parts[1];
-  if (!Number.isFinite(s) || !Number.isFinite(e) || s > e) {
-    ui.alert('⚠️ 입력 형식이 잘못되었습니다. 예: 1452,1489');
+  // 접두어 없는 숫자는 D (기존 입력 방식 그대로). 두 값의 접두어는 같아야 한다.
+  const parts = res.getResponseText().split(',').map(v => v.trim().toUpperCase().match(/^([DS])?(\d{1,4})$/));
+  const p1 = parts[0] ? (parts[0][1] || 'D') : '';
+  const p2 = parts[1] ? (parts[1][1] || 'D') : '';
+  const s = parts[0] ? parseInt(parts[0][2], 10) : NaN;
+  const e = parts[1] ? parseInt(parts[1][2], 10) : NaN;
+  if (parts.length !== 2 || !Number.isFinite(s) || !Number.isFinite(e) || s > e || p1 !== p2) {
+    ui.alert('⚠️ 입력 형식이 잘못되었습니다. 예: 1452,1489 또는 S0001,S0100');
     return;
   }
 
-  const summary = runSetPageless_(s, e);
+  const summary = runSetPageless_(p1, s, e);
   ui.alert(summary);
 }
 
 /** 공통 실행부: 범위 내 문서를 모두 PAGELESS로 전환 */
-function runSetPageless_(startNum, endNum) {
+function runSetPageless_(prefix, startNum, endNum) {
   // === 1. 폴더에서 대상 문서 수집 ===
   const folderIter = DriveApp.getFoldersByName(PAGELESS_CFG.FOLDER_NAME);
   if (!folderIter.hasNext()) {
@@ -65,7 +70,7 @@ function runSetPageless_(startNum, endNum) {
   const files = folder.getFiles();
   while (files.hasNext()) {
     const f = files.next();
-    const m = f.getName().match(/^D(\d{4})$/);
+    const m = f.getName().match(new RegExp(`^${prefix}(\\d{4})$`));
     if (!m) continue;
     const n = parseInt(m[1], 10);
     if (n >= startNum && n <= endNum) targets.push({ name: f.getName(), id: f.getId() });
