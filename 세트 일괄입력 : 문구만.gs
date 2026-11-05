@@ -100,33 +100,8 @@ function appendToOriginalP_(ss, cache, id, entry) {
 }
 
 /* =========================
- * 행 입력 파서
+ * parseRowInput_ · extractDocId 는 '세트 일괄입력 : 그림과 내용.gs' 의 것을 함께 쓴다.
+ * (두 파일에 같은 이름으로 조금씩 다른 정의가 있어, 파일 순서상 뒤의 것 하나가
+ *  두 메뉴 모두에 쓰이고 있었다. 그쪽 정의가 이쪽 기능을 모두 포함한다:
+ *  빈 입력 처리 · 25자 이상 ID 추출 폴백)
  * ========================= */
-function parseRowInput_(input) {
-  const set = new Set();
-  String(input)
-    .split(',')
-    .map(s => s.trim())
-    .forEach(part => {
-      if (/^\d+$/.test(part)) {
-        set.add(Number(part));
-      } else if (/^\d+\s*-\s*\d+$/.test(part)) {
-        let [a, b] = part.split('-').map(Number);
-        if (a > b) [a, b] = [b, a];
-        for (let i = a; i <= b; i++) set.add(i);
-      }
-    });
-  return [...set].filter(n => n > 0).sort((a, b) => a - b);
-}
-
-/* =========================
- * Google Docs ID 추출
- * ========================= */
-function extractDocId(url) {
-  const s = String(url || '').trim();
-  let m = s.match(/\/d\/([a-zA-Z0-9-_]+)/);
-  if (m) return m[1];
-  m = s.match(/[?&]id=([a-zA-Z0-9-_]+)/);
-  if (m) return m[1];
-  return null;
-}

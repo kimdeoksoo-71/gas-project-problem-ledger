@@ -86,9 +86,9 @@ function moveItemsAndLog() {
         continue;
       }
 
-      // ID 형식: D+4자리 (예: D0123)
-      if (!/^D\d{4}$/.test(id)) {
-        throw new Error(`ID 형식이 예상과 다름(예: D0123): ${id}`);
+      // ID 형식: D 또는 S + 4자리 (예: D0123, S0001)
+      if (!/^[DS]\d{4}$/.test(id)) {
+        throw new Error(`ID 형식이 예상과 다름(예: D0123, S0001): ${id}`);
       }
 
       // 세 시트에서 A열=ID 인 유일한 행 찾기

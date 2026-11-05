@@ -11,6 +11,7 @@
  **************************************************/
 
 const CONFIG = {
+  PREFIX: 'D',                      // 문서 ID 접두어 (D 또는 S)
   START_NUM: 1452,                  // 첫 문서 번호
   END_NUM: 1489,                    // 끝 문서 번호
   CUTOFF: '2026-07-15 09:00',       // 기준 시각: 이 시각 "이전"의 마지막 버전으로 복원
@@ -36,7 +37,7 @@ function runRestore_(dryRun) {
   const files = folder.getFiles();
   while (files.hasNext()) {
     const f = files.next();
-    const m = f.getName().match(/^D(\d{4})$/);
+    const m = f.getName().match(new RegExp(`^${CONFIG.PREFIX}(\\d{4})$`));
     if (!m) continue;
     const n = parseInt(m[1], 10);
     if (n >= CONFIG.START_NUM && n <= CONFIG.END_NUM) {
@@ -114,7 +115,7 @@ function runRestore_(dryRun) {
       // ✅ 추가된 부분: 복원 직후 '페이지 없음' 설정
       let pagelessMsg = '';
       if (CONFIG.SET_PAGELESS) {
-        const pr = setPageless_(t.id, token);
+        const pr = restoreSetPageless_(t.id, token);
         pagelessMsg = pr.ok ? ' + 페이지 없음 설정 완료' : ` (⚠ 페이지 없음 설정 실패: ${pr.msg})`;
       }
 
@@ -130,8 +131,10 @@ function runRestore_(dryRun) {
   Logger.log(`${dryRun ? '미리보기' : '복원'} 종료 — 정상: ${ok}개 / 실패: ${fail}개`);
 }
 
-/** Docs API로 문서를 '페이지 없음(PAGELESS)'으로 전환 */
-function setPageless_(docId, token) {
+/** Docs API로 문서를 '페이지 없음(PAGELESS)'으로 전환
+ *  (이름을 setPageless_ → restoreSetPageless_ 로 바꿨다 — 문항구글문서 자동생성.gs 의
+ *   같은 이름 함수와 전역에서 겹쳐 파일 순서에 따라 한쪽이 덮였다) */
+function restoreSetPageless_(docId, token) {
   const res = UrlFetchApp.fetch(
     `https://docs.googleapis.com/v1/documents/${docId}:batchUpdate`,
     {

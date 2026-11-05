@@ -1,6 +1,6 @@
 /**
  * 구글드라이브 폴더 내 파일명 일괄 변환 스크립트
- * 파일명 형식: D + 4자리 숫자 (예: D1345, D1346, ...)
+ * 파일명 형식: D 또는 S + 4자리 숫자 (예: D1345, D1346, ... / S0001, ...)
  * 정렬: 파일명 기준 내림차순 → 시작번호부터 1씩 증가
  */
 
@@ -28,7 +28,7 @@ function renameFilesInFolder() {
   const ui = SpreadsheetApp.getUi();
   const response = ui.prompt(
     "파일명 일괄 변환",
-    `폴더 내 파일 총 ${totalCount}개가 있습니다.\n\n시작번호 4자리를 입력하세요 (예: 1345):`,
+    `폴더 내 파일 총 ${totalCount}개가 있습니다.\n\n시작번호 4자리를 입력하세요 (예: 1345 → D1345, S0001 → S0001):`,
     ui.ButtonSet.OK_CANCEL
   );
 
@@ -38,15 +38,17 @@ function renameFilesInFolder() {
     return;
   }
 
-  const inputText = response.getResponseText().trim();
+  const inputText = response.getResponseText().trim().toUpperCase();
 
-  // 입력값 검증: 4자리 숫자인지 확인
-  if (!/^\d{4}$/.test(inputText)) {
-    ui.alert("오류: 4자리 숫자를 정확히 입력해주세요. (예: 1345)");
+  // 입력값 검증: 4자리 숫자(앞에 D 또는 S 가능). 숫자만 넣으면 D (기존 방식 그대로)
+  const im = inputText.match(/^([DS])?(\d{4})$/);
+  if (!im) {
+    ui.alert("오류: 4자리 숫자를 정확히 입력해주세요. (예: 1345, D1345, S0001)");
     return;
   }
 
-  let startNumber = parseInt(inputText, 10);
+  const idPrefix = im[1] || "D";
+  let startNumber = parseInt(im[2], 10);
 
   // 3) 파일명 기준 내림차순 정렬
   fileList.sort((a, b) => {
@@ -67,7 +69,7 @@ function renameFilesInFolder() {
     const oldName = file.getName();
     const extension = getExtension(oldName);
     const currentNumber = startNumber + i;
-    const newName = "D" + String(currentNumber).padStart(4, "0") + extension;
+    const newName = idPrefix + String(currentNumber).padStart(4, "0") + extension;
 
     try {
       file.setName(newName);
@@ -86,7 +88,7 @@ function renameFilesInFolder() {
     `총 파일 수: ${totalCount}`,
     `성공: ${successCount}개`,
     `실패: ${errorCount}개`,
-    `번호 범위: D${String(startNumber).padStart(4, "0")} ~ D${String(startNumber + totalCount - 1).padStart(4, "0")}`,
+    `번호 범위: ${idPrefix}${String(startNumber).padStart(4, "0")} ~ ${idPrefix}${String(startNumber + totalCount - 1).padStart(4, "0")}`,
     "",
     "── 변환 내역 ──",
     ...results,

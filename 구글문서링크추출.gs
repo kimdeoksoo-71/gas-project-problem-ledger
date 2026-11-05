@@ -1,5 +1,8 @@
 function saveDocumentLinks() {
   // 첫 문서와 마지막 문서의 일련번호를 사용자로부터 입력받음
+  // 접두어: D 또는 S (비우면 D — 기존 방식 그대로)
+  const prefixIn = String(Browser.inputBox("문서 ID 접두어를 입력하세요 (D 또는 S, 비우면 D)") || '').trim().toUpperCase();
+  const prefix = prefixIn === 'S' ? 'S' : 'D';
   const startNumber = parseInt(Browser.inputBox("첫 문서의 일련번호를 입력하세요 (예: 1001)"));
   const endNumber = parseInt(Browser.inputBox("마지막 문서의 일련번호를 입력하세요 (예: 1010)"));
 
@@ -17,8 +20,8 @@ function saveDocumentLinks() {
     const file = files.next();
     const fileName = file.getName();
 
-    // 파일명이 "D"로 시작하고 4자리 숫자로 되어 있는지 확인
-    const match = fileName.match(/^D(\d{4})$/);
+    // 파일명이 접두어(D/S)로 시작하고 4자리 숫자로 되어 있는지 확인
+    const match = fileName.match(new RegExp(`^${prefix}(\\d{4})$`));
     if (match) {
       const fileNumber = parseInt(match[1]);
 
