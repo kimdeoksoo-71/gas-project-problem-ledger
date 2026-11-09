@@ -37,6 +37,18 @@ function onOpen() {
   menu.addItem('CroP 이미지 ③ 검증 (문서 열어 확인)', 'cropVerify');
   menu.addItem('CroP 이미지 · 오류행 다시 대기로', 'cropRetryErrors');
   menu.addItem('CroP 이미지 · 중복 1벌 제거', 'cropFixDuplicates');
+
+  // ---- 그룹 : AI 대단원·태그 판정 (AiTagging.gs) ----
+  menu.addSeparator();
+  menu.addItem('AI 판정 · API 키 저장 (내 계정)', 'ai_setApiKey');
+  menu.addItem('AI 태그 사전 만들기/갱신 (_태그사전)', 'ai_buildTagDict');
+  menu.addItem('AI 판정 ① 파일럿 제출 (장부에 쓰지 않음)', 'ai_pilotSubmit');
+  menu.addItem('AI 판정 ② 본 실행 제출', 'ai_tagSubmit');
+  menu.addItem('AI 판정 · 강제 제출 (보류/실패 행 포함)', 'ai_tagSubmitForce');
+  menu.addItem('AI 판정 · 선택 행 즉시 판정 (최대 8행)', 'ai_tagSelectionNow');
+  menu.addItem('AI 판정 · 상태 / 지금 수거', 'ai_tagStatus');
+  menu.addItem('AI 판정 · 중지 (배치 취소)', 'ai_tagStop');
+  menu.addItem('AI 판정 · 실행 되돌리기', 'ai_undoRun');
   menu.addToUi();
 }
 
