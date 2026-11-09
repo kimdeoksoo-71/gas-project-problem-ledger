@@ -38,11 +38,16 @@
  *      cropRetryErrors() / cropFixDuplicates() / cropVerifyReset() — 후처리
  *
  * 처리된 행은 색인 시트에 ✅ 가 남고, 문서 끝과 P열(이력)에 "[yy-MM-dd] CroP 이미지 삽입: …" 한 줄이 남는다.
+ *
+ * ── 2026-11-09 추가 ──────────────────────────────────────────────────────
+ *   - 이미지 폴더를 IMAGE_DS(고정 ID)로 지정. CroP PNG 가 '20 문항 관리/CROPS' 에서 PBMAI/IMAGE_DS 로 옮겨져 CROPS 는 비어 있다.
+ *   - CROP_CFG.ONLY_IDS: 삽입 대상을 문항ID 범위로 제한 (색인에 대기 행이 더 있어도 범위 밖은 건드리지 않음).
+ *   - 삽입이 끝난 문항은 원본 시트([풀세트]/[써킷]/[문항]) O열(등록)에 1 을 적는다 (CROP_CFG.WRITE_REG).
  */
 
 const CROP_CFG = {
   // ── 이미지 폴더 ─────────────────────────────────────────────
-  FOLDER_ID: '',                 // 폴더 ID를 알면 여기에. 비우면 '20 문항 관리' 아래 FOLDER_NAME 으로 찾음
+  FOLDER_ID: '1fPY6942RrCcsmoHL-3HbtSk8F210ngXi',   // PBMAI/IMAGE_DS (2026-11-09). 비우면 '20 문항 관리' 아래 FOLDER_NAME 으로 찾음
   FOLDER_NAME: 'CROPS',
 
   // ── 문항장부 ────────────────────────────────────────────────
@@ -53,7 +58,13 @@ const CROP_CFG = {
   COL_SUBJ: 6,   // F  (사)과목   예) "1 공통"
   COL_NO: 7,     // G  (사)번호
   COL_DOC: 14,   // N  구글문서 링크 (셀 링크 또는 텍스트)
+  COL_REG: 15,   // O  등록 (0/1 목록 검증). 삽입 완료 시 1
   COL_PLOG: 16,  // P  이력
+
+  // ── 삽입 대상 제한 ──────────────────────────────────────────
+  //    null 이면 색인의 대기 행 전부. {prefix, from, to} 면 그 문항ID 범위만 삽입한다 (예: S0001~S1014).
+  //    범위 밖 대기 행은 색인에 대기(빈 상태)로 그대로 남는다.
+  ONLY_IDS: { prefix: 'S', from: 1, to: 1014 },
 
   // ── 세트명 해석 ─────────────────────────────────────────────
   NO_YEAR_DEFAULT: '24',         // E열에 연도가 없을 때(X.02, 써킷.X.05) 붙일 연도
@@ -68,6 +79,7 @@ const CROP_CFG = {
   IMG_MAX_WIDTH_PX: 600,   // 이 폭(px)보다 넓은 이미지는 비율 유지해 줄임. 0 이면 원본 크기 그대로
   ADD_CAPTION: false,      // true 면 이미지 위에 "▣ 26X모의14 1공통22" 한 줄 추가
   WRITE_LOG: true,         // 문서 끝 + P열에 처리 로그 한 줄
+  WRITE_REG: true,         // 삽입 완료(이미삽입됨 포함) 시 원본 시트 O열(등록)에 1
   LOG_TAG: 'CroP 이미지 삽입',
 
   // ── 배치 실행 ───────────────────────────────────────────────
@@ -373,13 +385,14 @@ function cropRunBatch_() {
     CROP_CFG.TARGET_SHEETS.forEach(n => { const s = ss.getSheetByName(n); if (s) targetSheets[n] = s; });
 
     const tz = Session.getScriptTimeZone() || 'Asia/Seoul';
-    let done = 0, failed = 0, remaining = 0, stoppedForTime = false;
+    let done = 0, failed = 0, remaining = 0, outOfScope = 0, stoppedForTime = false;
 
     for (let i = 0; i < data.length; i++) {
       const row = data[i];
       const st = String(row[CROP_IDX.STATUS - 1] || '').trim();
       const pending = st === '' || (st.startsWith('🧪') && !CROP_CFG.DRY_RUN);   // 대기 행 (+ DRY_RUN 흔적은 실제 실행 때 다시 처리)
       if (!pending) continue;
+      if (!cropInScope_(row[CROP_IDX.ITEM_ID - 1])) { outOfScope++; continue; }   // 대상 범위 밖 → 대기로 둔다
       if (Date.now() - t0 > CROP_CFG.TIME_BUDGET_MS) { stoppedForTime = true; remaining++; continue; }
 
       const sheetRow = i + 2;
@@ -404,10 +417,28 @@ function cropRunBatch_() {
       return { summary: `이번 실행: 성공 ${done}, 실패 ${failed} (${elapsed}초). 남은 ${remaining}개는 약 ${Math.round(CROP_CFG.NEXT_RUN_DELAY_MS / 1000)}초 뒤 자동으로 이어서 처리합니다.` };
     }
     cropFinish_();
-    return { summary: `✅ 전체 완료: 이번 실행 성공 ${done}, 실패 ${failed} (${elapsed}초). 결과는 '${CROP_CFG.INDEX_SHEET}' 시트 참고.` };
+    return { summary: `✅ 전체 완료: 이번 실행 성공 ${done}, 실패 ${failed} (${elapsed}초). 결과는 '${CROP_CFG.INDEX_SHEET}' 시트 참고.` +
+      (outOfScope ? `\n대상 범위(${cropScopeLabel_()}) 밖이라 건너뛴 대기 행 ${outOfScope}개` : '') };
   } finally {
     lock.releaseLock();
   }
+}
+
+/** 문항ID 가 CROP_CFG.ONLY_IDS 범위 안인가 (ONLY_IDS 가 null 이면 항상 true) */
+function cropInScope_(itemId) {
+  const o = CROP_CFG.ONLY_IDS;
+  if (!o) return true;
+  const m = String(itemId || '').trim().match(/^([A-Za-z]+)(\d+)$/);
+  if (!m || m[1] !== o.prefix) return false;
+  const n = parseInt(m[2], 10);
+  return n >= o.from && n <= o.to;
+}
+
+function cropScopeLabel_() {
+  const o = CROP_CFG.ONLY_IDS;
+  if (!o) return '전체';
+  const pad = n => String(n).padStart(4, '0');
+  return `${o.prefix}${pad(o.from)}~${o.prefix}${pad(o.to)}`;
 }
 
 function cropFinish_() {

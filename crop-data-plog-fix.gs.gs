@@ -79,15 +79,18 @@ function cropProcessItem_(row, targetSheets, tz) {
 
   // Data 시트(배열 수식)에는 절대 쓰지 않는다. 문항ID 로 원본 시트 행을 찾는다.
   let pCell = null;
-  if (CROP_CFG.WRITE_LOG) {
+  if (CROP_CFG.WRITE_LOG || CROP_CFG.WRITE_REG) {
     pCell = cropSourcePCell_(itemId);
     if (!pCell) throw new Error(`원본 시트(${CROP_SOURCE_SHEETS.join(', ')})에서 문항ID '${itemId}' 를 찾지 못했거나 중복입니다`);
   }
+  // 삽입 완료 표시: 같은 행 O열(등록) = 1  (2026-11-09)
+  const markReg = () => { if (CROP_CFG.WRITE_REG && pCell) pCell.offset(0, CROP_CFG.COL_REG - CROP_CFG.COL_PLOG).setValue(1); };
 
   const logLine = `[${Utilities.formatDate(new Date(), tz, 'yy-MM-dd')}] ${CROP_CFG.LOG_TAG}: ${fileKey} (문제 1 + 해설 ${solIds.length})`;
 
   // 이미 넣은 문항이면 건너뜀 (P열 로그로 2차 확인, 구 파일키 로그도 인정)
-  if (pCell && cropHasLog_(String(pCell.getValue() || ''), fileKey)) {
+  if (CROP_CFG.WRITE_LOG && pCell && cropHasLog_(String(pCell.getValue() || ''), fileKey)) {
+    if (!CROP_CFG.DRY_RUN) markReg();
     return { status: '✅ 이미삽입됨', msg: 'P열에 동일 로그 있어 건너뜀' };
   }
 
@@ -112,7 +115,8 @@ function cropProcessItem_(row, targetSheets, tz) {
   if (CROP_CFG.WRITE_LOG) body.appendParagraph(logLine);
   doc.saveAndClose();
 
-  if (pCell) cropAppendLine_(pCell, logLine);
+  if (CROP_CFG.WRITE_LOG && pCell) cropAppendLine_(pCell, logLine);
+  markReg();
 
   return { status: '✅', msg: `이미지 ${blobs.length}장 삽입` };
 }
