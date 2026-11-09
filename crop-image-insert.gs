@@ -565,7 +565,7 @@ function cropFixDuplicates() {
       for (let k = body.getNumChildren() - 1; k >= 0; k--) {
         const el = body.getChild(k);
         if (el.getType() === DocumentApp.ElementType.PARAGRAPH && cropHasLog_(el.asParagraph().getText(), key)) {
-          if (k === body.getNumChildren() - 1) el.asParagraph().setText(''); else body.removeChild(el);
+          if (k === body.getNumChildren() - 1) el.asParagraph().clear(); else body.removeChild(el);   // 마지막 문단은 지울 수 없어 비움(setText('')은 '빈 텍스트 요소' 오류, 2026-11-10)
           break;
         }
       }
