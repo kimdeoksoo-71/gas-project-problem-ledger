@@ -38,11 +38,24 @@
  *      cropRetryErrors() / cropFixDuplicates() / cropVerifyReset() — 후처리
  *
  * 처리된 행은 색인 시트에 ✅ 가 남고, 문서 끝과 P열(이력)에 "[yy-MM-dd] CroP 이미지 삽입: …" 한 줄이 남는다.
+ *
+ * ── 2026-11-09 추가 ──────────────────────────────────────────────────────
+ *   - 이미지 폴더를 IMAGE_DS(고정 ID)로 지정. CroP PNG 가 '20 문항 관리/CROPS' 에서 PBMAI/IMAGE_DS 로 옮겨져 CROPS 는 비어 있다.
+ *   - 삽입 대상을 문항ID 범위로 제한 (색인에 대기 행이 더 있어도 범위 밖은 건드리지 않음).
+ *
+ * ── 2026-11-13 변경 ──────────────────────────────────────────────────────
+ *   - 대상 범위를 코드 상수(ONLY_IDS)가 아니라 '② 삽입 시작' 대화상자에서 입력한다.
+ *     예) S5001-S5326 · D2277 · S0001-S1090, D2277 · 전체.  입력값은 스크립트 속성 CROP_INSERT_SCOPE 에
+ *     저장돼 트리거 이어 돌기에서도 같은 범위를 쓰고, 완료·중지 때 지운다. 속성이 없으면 이어 돌기는 멈춘다
+ *     (범위 없이 전체 대기 행을 처리하는 사고 방지).
+ *   - 시간 예산 4분 → 3분, 그리고 배치 '시작' 때 8분 뒤 안전망 트리거를 먼저 걸어 둔다.
+ *     6분 한도로 강제 종료돼도 안전망이 이어 돌린다(정상 종료면 지워진다). 검증도 같다.
+ *   - 삽입이 끝난 문항은 원본 시트([풀세트]/[써킷]/[문항]) O열(등록)에 1 을 적는다 (CROP_CFG.WRITE_REG).
  */
 
 const CROP_CFG = {
   // ── 이미지 폴더 ─────────────────────────────────────────────
-  FOLDER_ID: '',                 // 폴더 ID를 알면 여기에. 비우면 '20 문항 관리' 아래 FOLDER_NAME 으로 찾음
+  FOLDER_ID: '1fPY6942RrCcsmoHL-3HbtSk8F210ngXi',   // PBMAI/IMAGE_DS (2026-11-09). 비우면 '20 문항 관리' 아래 FOLDER_NAME 으로 찾음
   FOLDER_NAME: 'CROPS',
 
   // ── 문항장부 ────────────────────────────────────────────────
@@ -53,7 +66,12 @@ const CROP_CFG = {
   COL_SUBJ: 6,   // F  (사)과목   예) "1 공통"
   COL_NO: 7,     // G  (사)번호
   COL_DOC: 14,   // N  구글문서 링크 (셀 링크 또는 텍스트)
+  COL_REG: 15,   // O  등록 (0/1 목록 검증). 삽입 완료 시 1
   COL_PLOG: 16,  // P  이력
+
+  // ── 삽입 대상 제한 ──────────────────────────────────────────
+  //    2026-11-13부터 '② 삽입 시작' 대화상자에서 입력한다 (cropStartInsert). 범위 밖 대기 행은 대기로 남는다.
+  PROP_SCOPE: 'CROP_INSERT_SCOPE',
 
   // ── 세트명 해석 ─────────────────────────────────────────────
   NO_YEAR_DEFAULT: '24',         // E열에 연도가 없을 때(X.02, 써킷.X.05) 붙일 연도
@@ -68,11 +86,13 @@ const CROP_CFG = {
   IMG_MAX_WIDTH_PX: 600,   // 이 폭(px)보다 넓은 이미지는 비율 유지해 줄임. 0 이면 원본 크기 그대로
   ADD_CAPTION: false,      // true 면 이미지 위에 "▣ 26X모의14 1공통22" 한 줄 추가
   WRITE_LOG: true,         // 문서 끝 + P열에 처리 로그 한 줄
+  WRITE_REG: true,         // 삽입 완료(이미삽입됨 포함) 시 원본 시트 O열(등록)에 1
   LOG_TAG: 'CroP 이미지 삽입',
 
   // ── 배치 실행 ───────────────────────────────────────────────
-  TIME_BUDGET_MS: 4 * 60 * 1000,   // 큰 이미지 5~6장짜리 문항은 1건에 1분 가까이 걸릴 수 있어 6분 한도에 여유를 둔다
+  TIME_BUDGET_MS: 3 * 60 * 1000,   // 큰 이미지 문항은 1건에 1~2분이 걸릴 수 있어 6분 한도에 여유를 둔다 (4분일 때 강제 종료 실측 2026-11-13)
   NEXT_RUN_DELAY_MS: 60 * 1000,
+  SAFETY_DELAY_MS: 8 * 60 * 1000, // 배치 시작 때 거는 안전망 트리거 (6분 한도로 죽어도 이어 돈다. 정상 종료면 지운다)
   SLEEP_MS: 200,
   DRY_RUN: false,          // true 면 문서를 열어 확인만 하고 넣지 않음 (색인에 '🧪' 표시)
 
@@ -340,8 +360,52 @@ function cropStartInsert() {
     cropAlert_(`⚠️ '${CROP_CFG.INDEX_SHEET}' 시트가 없습니다. cropBuildIndex 를 먼저 실행하세요.`);
     return;
   }
+  const ui = SpreadsheetApp.getUi();
+  const props = PropertiesService.getScriptProperties();
+  if (props.getProperty(CROP_CFG.PROP_RUNNING) === '1') {
+    const prev = props.getProperty(CROP_CFG.PROP_SCOPE);
+    const go = ui.alert('CroP 이미지 삽입',
+      `이미 진행 중인 삽입이 있습니다 (범위: ${prev ? cropScopeLabel_(JSON.parse(prev)) : '알 수 없음'}).\n` +
+      `새 범위로 다시 시작할까요? (진행 중이던 예약은 지워집니다)`, ui.ButtonSet.YES_NO);
+    if (go !== ui.Button.YES) return;
+  }
+
+  const res = ui.prompt('CroP 이미지 ② 삽입 — 대상 범위',
+    '이미지를 넣을 문항ID를 입력하세요.\n' +
+    '  범위: S5001-S5326   한 개: D2277   여러 개: S0001-S1090, D2277\n' +
+    '  전체: 전체   (색인의 대기 행 전부)\n' +
+    '※ 색인에서 상태가 빈(대기) 행만 처리합니다. ✅ 행은 건너뜁니다.',
+    ui.ButtonSet.OK_CANCEL);
+  if (res.getSelectedButton() !== ui.Button.OK) return;
+  const scope = cropParseScope_(res.getResponseText());
+  if (scope.error) { ui.alert('⚠️ ' + scope.error); return; }
+
+  // 대상 대기 행 수를 미리 센다
+  const idx = ss.getSheetByName(CROP_CFG.INDEX_SHEET);
+  const n = idx.getLastRow() - 1;
+  let inScope = 0, outScope = 0;
+  const firstIds = [];
+  if (n > 0) {
+    idx.getRange(2, 1, n, CROP_IDX.HEADER.length).getValues().forEach(r => {
+      const st = String(r[CROP_IDX.STATUS - 1] || '').trim();
+      if (!(st === '' || (st.startsWith('🧪') && !CROP_CFG.DRY_RUN))) return;
+      if (cropInScope_(r[CROP_IDX.ITEM_ID - 1], scope)) { inScope++; if (firstIds.length < 5) firstIds.push(String(r[CROP_IDX.ITEM_ID - 1] || r[CROP_IDX.KEY - 1])); }
+      else outScope++;
+    });
+  }
+  if (inScope === 0) {
+    ui.alert(`범위(${cropScopeLabel_(scope)}) 안에 대기 행이 없습니다.` + (outScope ? `\n(범위 밖 대기 행 ${outScope}개)` : ''));
+    return;
+  }
+  const ok = ui.alert('CroP 이미지 ② 삽입 — 확인',
+    `범위: ${cropScopeLabel_(scope)}\n대기 행 ${inScope}개를 처리합니다 (예: ${firstIds.join(', ')}${inScope > firstIds.length ? ' …' : ''}).\n` +
+    (outScope ? `범위 밖 대기 행 ${outScope}개는 그대로 둡니다.\n` : '') +
+    `\n3분씩 끊어 자동으로 이어서 돕니다. 시작할까요?`, ui.ButtonSet.YES_NO);
+  if (ok !== ui.Button.YES) return;
+
   cropDeleteTriggers_();
-  PropertiesService.getScriptProperties().setProperty(CROP_CFG.PROP_RUNNING, '1');
+  props.setProperty(CROP_CFG.PROP_SCOPE, JSON.stringify(scope));
+  props.setProperty(CROP_CFG.PROP_RUNNING, '1');
   cropAlert_(cropRunBatch_().summary);
 }
 
@@ -352,6 +416,7 @@ function cropContinueInsert() {   // 트리거 핸들러
 
 function cropStopInsert() {
   PropertiesService.getScriptProperties().deleteProperty(CROP_CFG.PROP_RUNNING);
+  PropertiesService.getScriptProperties().deleteProperty(CROP_CFG.PROP_SCOPE);
   cropDeleteTriggers_();
   cropAlert_('⏹ 중지했습니다. 다시 시작하려면 cropStartInsert 를 실행하세요 (처리된 행은 건너뜁니다).');
 }
@@ -363,6 +428,14 @@ function cropRunBatch_() {
   if (!lock.tryLock(10 * 1000)) return { summary: '다른 실행이 진행 중입니다. 잠시 후 다시 시도하세요.' };
 
   try {
+    const scopeRaw = PropertiesService.getScriptProperties().getProperty(CROP_CFG.PROP_SCOPE);
+    if (!scopeRaw) { cropFinish_(); return { summary: '⚠️ 대상 범위가 저장돼 있지 않아 멈췄습니다. 메뉴 ② 삽입 시작에서 범위를 다시 입력하세요.' }; }
+    const scope = JSON.parse(scopeRaw);
+
+    // 안전망: 이 실행이 6분 한도로 강제 종료돼도 8분 뒤 이어서 돈다 (정상 종료면 아래에서 지운다)
+    cropDeleteTriggers_();
+    ScriptApp.newTrigger(CROP_CFG.TRIGGER_HANDLER).timeBased().after(CROP_CFG.SAFETY_DELAY_MS).create();
+
     const ss = SpreadsheetApp.getActiveSpreadsheet();
     const idx = ss.getSheetByName(CROP_CFG.INDEX_SHEET);
     const lastRow = idx.getLastRow();
@@ -373,13 +446,14 @@ function cropRunBatch_() {
     CROP_CFG.TARGET_SHEETS.forEach(n => { const s = ss.getSheetByName(n); if (s) targetSheets[n] = s; });
 
     const tz = Session.getScriptTimeZone() || 'Asia/Seoul';
-    let done = 0, failed = 0, remaining = 0, stoppedForTime = false;
+    let done = 0, failed = 0, remaining = 0, outOfScope = 0, stoppedForTime = false;
 
     for (let i = 0; i < data.length; i++) {
       const row = data[i];
       const st = String(row[CROP_IDX.STATUS - 1] || '').trim();
       const pending = st === '' || (st.startsWith('🧪') && !CROP_CFG.DRY_RUN);   // 대기 행 (+ DRY_RUN 흔적은 실제 실행 때 다시 처리)
       if (!pending) continue;
+      if (!cropInScope_(row[CROP_IDX.ITEM_ID - 1], scope)) { outOfScope++; continue; }   // 대상 범위 밖 → 대기로 둔다
       if (Date.now() - t0 > CROP_CFG.TIME_BUDGET_MS) { stoppedForTime = true; remaining++; continue; }
 
       const sheetRow = i + 2;
@@ -404,14 +478,53 @@ function cropRunBatch_() {
       return { summary: `이번 실행: 성공 ${done}, 실패 ${failed} (${elapsed}초). 남은 ${remaining}개는 약 ${Math.round(CROP_CFG.NEXT_RUN_DELAY_MS / 1000)}초 뒤 자동으로 이어서 처리합니다.` };
     }
     cropFinish_();
-    return { summary: `✅ 전체 완료: 이번 실행 성공 ${done}, 실패 ${failed} (${elapsed}초). 결과는 '${CROP_CFG.INDEX_SHEET}' 시트 참고.` };
+    return { summary: `✅ 범위(${cropScopeLabel_(scope)}) 완료: 이번 실행 성공 ${done}, 실패 ${failed} (${elapsed}초). 결과는 '${CROP_CFG.INDEX_SHEET}' 시트 참고.` +
+      (outOfScope ? `\n범위 밖이라 건너뛴 대기 행 ${outOfScope}개` : '') };
   } finally {
     lock.releaseLock();
   }
 }
 
+/**
+ * 대화상자 입력 → 범위 객체.  {all:true} 또는 {parts:[{prefix,from,to}]}
+ *   "S5001-S5326" · "S5001~S5326" · "D2277" · "S0001-S1090, D2277" · "전체"
+ */
+function cropParseScope_(text) {
+  const t = String(text || '').trim().toUpperCase().replace(/\s*([-~])\s*/g, '$1');
+  if (!t) return { error: '범위를 입력하세요.' };
+  if (t === '전체' || t === 'ALL') return { all: true };
+  const parts = [];
+  for (const raw of t.split(/[,;\s]+/).filter(Boolean)) {
+    const m = raw.match(/^([DS])(\d{4})(?:[-~]([DS])?(\d{4}))?$/);
+    if (!m) return { error: `형식이 맞지 않습니다: ${raw}\n(예: S5001-S5326, D2277)` };
+    if (m[3] && m[3] !== m[1]) return { error: `범위 앞뒤의 접두어가 다릅니다: ${raw}` };
+    const from = parseInt(m[2], 10), to = m[4] ? parseInt(m[4], 10) : from;
+    if (to < from) return { error: `범위가 거꾸로입니다: ${raw}` };
+    parts.push({ prefix: m[1], from, to });
+  }
+  return { parts };
+}
+
+/** 문항ID 가 범위 안인가 */
+function cropInScope_(itemId, scope) {
+  if (!scope) return false;
+  if (scope.all) return true;
+  const m = String(itemId || '').trim().toUpperCase().match(/^([A-Z]+)(\d+)$/);
+  if (!m) return false;
+  const n = parseInt(m[2], 10);
+  return (scope.parts || []).some(p => p.prefix === m[1] && n >= p.from && n <= p.to);
+}
+
+function cropScopeLabel_(scope) {
+  if (!scope) return '없음';
+  if (scope.all) return '전체';
+  const pad = n => String(n).padStart(4, '0');
+  return (scope.parts || []).map(p => p.from === p.to ? `${p.prefix}${pad(p.from)}` : `${p.prefix}${pad(p.from)}~${p.prefix}${pad(p.to)}`).join(', ');
+}
+
 function cropFinish_() {
   PropertiesService.getScriptProperties().deleteProperty(CROP_CFG.PROP_RUNNING);
+  PropertiesService.getScriptProperties().deleteProperty(CROP_CFG.PROP_SCOPE);
   cropDeleteTriggers_();
 }
 
@@ -447,10 +560,13 @@ function cropVerifyBatch_() {
   const lock = LockService.getScriptLock();
   if (!lock.tryLock(10 * 1000)) return { summary: '다른 실행이 진행 중입니다.' };
   try {
+    // 안전망: 6분 한도로 강제 종료돼도 8분 뒤 이어서 검증한다 (정상 종료면 아래에서 지운다)
+    cropDeleteTriggers_(CROP_CFG.VERIFY_TRIGGER_HANDLER);
+    ScriptApp.newTrigger(CROP_CFG.VERIFY_TRIGGER_HANDLER).timeBased().after(CROP_CFG.SAFETY_DELAY_MS).create();
     const ss = SpreadsheetApp.getActiveSpreadsheet();
     const idx = ss.getSheetByName(CROP_CFG.INDEX_SHEET);
     const lastRow = idx.getLastRow();
-    if (lastRow < 2) return { summary: '색인이 비어 있습니다.' };
+    if (lastRow < 2) { PropertiesService.getScriptProperties().deleteProperty(CROP_CFG.PROP_VERIFYING); cropDeleteTriggers_(CROP_CFG.VERIFY_TRIGGER_HANDLER); return { summary: '색인이 비어 있습니다.' }; }
     idx.getRange(1, 1, 1, CROP_IDX.HEADER.length).setValues([CROP_IDX.HEADER]);
     const data = idx.getRange(2, 1, lastRow - 1, CROP_IDX.HEADER.length).getValues();
     let done = 0, flagged = 0, remaining = 0, stopped = false;
@@ -534,7 +650,7 @@ function cropFixDuplicates() {
       for (let k = body.getNumChildren() - 1; k >= 0; k--) {
         const el = body.getChild(k);
         if (el.getType() === DocumentApp.ElementType.PARAGRAPH && cropHasLog_(el.asParagraph().getText(), key)) {
-          if (k === body.getNumChildren() - 1) el.asParagraph().setText(''); else body.removeChild(el);
+          if (k === body.getNumChildren() - 1) el.asParagraph().clear(); else body.removeChild(el);   // 마지막 문단은 지울 수 없어 비움(setText('')은 '빈 텍스트 요소' 오류, 2026-11-10)
           break;
         }
       }
